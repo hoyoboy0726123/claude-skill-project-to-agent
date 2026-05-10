@@ -1,0 +1,16 @@
+# Core agent
+google-genai>=2.0.0
+python-dotenv>=1.0.0
+
+# Telegram bot (Phase 6)
+python-telegram-bot>=21.0
+
+# Web search (Phase 8 — optional)
+# tavily-python>=0.3.0
+
+# Common project deps the agent often needs:
+# pandas
+# openpyxl
+# python-docx
+# requests
+# pillow
