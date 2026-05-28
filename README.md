@@ -1,6 +1,6 @@
 # project-to-agent
 
-> 一個 Claude Code skill — 把任何現有的軟體專案,引導你走完 9 個階段,變成一個可以自我進化、能用 Telegram 遠端對話的 agent(包工具 + Gemma-4-31B 大腦 + 資料夾權限 + 選用的 shell + Tavily 搜尋)。
+> 一個 Claude Code skill — 把任何現有的軟體專案,引導你走完 12 個階段,變成一個**只透過 Telegram 操作**的對話式 agent(多 LLM provider + 資料夾權限 + two-step write 協議 + hallucination 偵測 + 可選 shell 沙盒 + Tavily 搜尋 + self-evolution)。
 
 [English version](README.en.md)
 
@@ -12,108 +12,87 @@
 - 「我想讓這個 CLI 工具可以遠端用」
 - 「做一個會自己寫新工具的 AI 助理」
 
-它會引導 Claude(跟你)走完 9 個階段,最後得到一個架在你**現有專案**之上、用 Telegram 操作的 agent。
+Skill 帶 Claude(跟你)走完 12 個階段、最後得到一個架在你**現有專案**之上、用 Telegram 操作的 agent。
 
-## 9 個階段
+## 12 個階段
 
 | # | 階段 | 做什麼 |
 |---|---|---|
 | 1 | **分析** | 讀你的程式、寫一段摘要、跟你確認沒誤解 |
 | 2 | **工具候選** | 從專案挑 5–15 個值得包成 tool 的 function |
-| 3 | **LLM 設定** | Google AI Studio 拿 Gemma-4-31B(免費)、`.env`、retry 模式 |
-| 4 | **Agent 核心** | tool registry + Gemini client + orchestrator(planner loop) |
-| 5 | **權限邊界** | 資料夾 ACL — agent 只能碰你允許的目錄 |
-| 6 | **Telegram 介面** | 在外面用手機對話、生成的檔案自動傳回 chat |
-| 7 | **Shell 工具** *(選用)* | 每次執行都要按鈕同意,讓 agent 能寫 code 跟改自己 |
-| 8 | **Tavily 網路搜尋** *(選用)* | 每月免費 1000 次,給「查一下」這種需求 |
-| 9 | **自我進化迴圈** *(選用)* | Agent 提案新工具,你在 Telegram 按按鈕同意才合併 |
+| 3 | **LLM 設定** | Multi-provider:Gemini(預設、免費)/ Groq / OpenAI / Anthropic / Ollama |
+| 4 | **Agent 核心** | tool registry + orchestrator(planner loop)+ per-chat state |
+| 5 | **Two-step write 協議** | 寫操作必預覽 → 確認 → 才執行,防 LLM 一次性寫錯 |
+| 6 | **Hallucination 偵測** | LLM 宣稱「已執行」但實際沒呼工具的自動偵測 + 警告 |
+| 7 | **權限邊界** | 資料夾 ACL — agent 只能碰你允許的目錄 |
+| 8 | **Telegram 介面** | per-chat 隔離、polling lock、4000 字 chunking、tool progress 推送 |
+| 9 | **Channel-specific 系統 prompt** | TG 通道規範 + 動態注入(今日日期、工具清單)|
+| 10 | **Shell 工具** *(選用)* | Host 模式 / Sandbox 模式二選一(沙盒走自家 .bat 裝 Docker Engine、**不用 Docker Desktop**) |
+| 11 | **Tavily 網路搜尋** *(選用)* | 每月免費 1000 次 + 1h cache + per-user rate limit |
+| 12 | **自我進化迴圈** *(選用)* | Agent 提案新工具,你在 Telegram 按按鈕同意,evals 通過才合併 |
 
 每跑完一個階段就 commit 到 git,任何階段出錯都能一鍵還原。
 
-最小可用版本是 **階段 1–6**;7–9 解鎖自我修改能力,每個都是清楚的 opt-in,優缺點會明說。
+最小可用版本 = **階段 1-8**(分析 → 工具 → LLM → core → two-step → hallucination → permissions → TG);9-12 解鎖進階能力,每個都是清楚的 opt-in moment。
 
-## 為什麼預設用 Gemma-4-31B
+## 為什麼預設用 Gemini / Gemma
 
-Google AI Studio **免費**支援 function-calling 跟 vision 兩個能力。User 不用付錢就能跑出真正能用的 agent,等到 free tier 不夠用了再換更強的模型。換模型只要改一個字串(`gemma-4-31b-it` → `gemini-2.5-flash` / `gemini-3-pro-preview` 等),其他 code 都不動。
+Google AI Studio **免費**支援 function-calling 跟 vision、不用信用卡。預設 model `gemma-4-31b-it`,quota 不夠再切到付費的 `gemini-2.5-flash` 或別家 provider — 只改 `.env` 一個變數,code 不動(`llm_client.py` 是 multi-provider factory)。
 
-Skill 內附的 `gemini_client.py` 含 retry 邏輯,專門處理 Gemma-4 在免費 tier 容易遇到的 transient `500 INTERNAL` 錯誤 — 即使 Google 那邊忙的時候,agent 也跑得穩。
+## 為什麼沙盒不用 Docker Desktop
 
-## 評估結果
-
-用 3 個真實情境(Python CLI 工具 / 一堆雜亂的 script 資料夾 / 自我進化的 coder)測試,**有 skill** vs **沒 skill 的 baseline**:
-
-| Eval | 有 skill | baseline | 差 |
-|---|---|---|---|
-| python-cli-tool | **10/10** (100%) | 7/10 (70%) | +30 pp |
-| vague-folder-of-scripts | **8/9** (89%) | 5/9 (56%) | +33 pp |
-| self-evolving-coder | **10/10** (100%) | 3/10 (30%) | **+70 pp** |
-| **平均** | **96%** | **52%** | **+44 pp** |
-
-差距最大的是「自我進化」這題 — baseline 直接給了一個會跑 shell 卻沒有資料夾權限、沒有逐步同意機制的 agent(教科書級的安全漏洞)。有 skill 的版本則在階段 5/7 沒就位之前堅持不加 shell,加了之後還明確 deny-list(rm -rf、chmod +s、.ssh、force-push…),三層安全保護。
-
-## 安裝
-
-這是 Claude Code skill,放到 skills 資料夾裡:
-
-```bash
-# Linux / macOS
-git clone https://github.com/hoyoboy0726123/claude-skill-project-to-agent.git \
-  ~/.claude/skills/project-to-agent
-
-# Windows (PowerShell)
-git clone https://github.com/hoyoboy0726123/claude-skill-project-to-agent.git `
-  $env:USERPROFILE\.claude\skills\project-to-agent
-```
-
-裝完後 Claude Code 會自動載入,你開新對話用相關 prompt 就會觸發。
+Skill 附自己的 `setup_sandbox.bat` + `setup.sh`,在 WSL2 內透過 docker.com 官方 install script 裝 Docker Engine。**Docker Engine 開源、商業免費**;Docker Desktop 大公司用要付費,skill 預設避開那條路徑、讓使用者下游做任何用途都不踩授權雷。
 
 ## 結構
 
 ```
 project-to-agent/
-├── SKILL.md                 # 主 workflow + 階段摘要(永遠在 context)
-├── references/              # 階段細節文件(需要時才載入)
+├── SKILL.md                            # 主流程 + 12 階段摘要(永遠在 context)
+├── references/
 │   ├── phase1-analyze.md
 │   ├── phase2-tools.md
-│   ├── phase3-llm.md
-│   ├── phase4-core.md
-│   ├── phase5-permissions.md
-│   ├── phase6-telegram.md
-│   ├── phase7-shell.md
-│   ├── phase8-tavily.md
-│   └── phase9-evolve.md
-├── assets/                  # 可以直接 cp 到 user 專案的範本
-│   ├── agent_template.py    # Tool registry + orchestrator
-│   ├── gemini_client.py     # Gemini SDK 包裝(含 retry + Gemma vision quirks)
-│   ├── telegram_adapter.py  # Telegram bot 前端
-│   ├── tools_template.py    # 包現有 function 的 pattern
+│   ├── phase3-llm.md                   # multi-provider LLM setup
+│   ├── phase4-core.md                  # planner loop + per-chat orchestrator
+│   ├── phase5-two-step-write.md        # 寫操作協議
+│   ├── phase6-hallucination-detection.md
+│   ├── phase7-permissions.md
+│   ├── phase8-telegram.md              # per-chat / chunking / polling lock / progress
+│   ├── phase9-channel-prompts.md       # channel marker + 動態注入
+│   ├── phase10-shell.md                # shell + host/sandbox 選擇 + .bat 引導
+│   ├── phase11-tavily.md               # search + cache + rate limit
+│   └── phase12-evolve.md               # self-evolution + evals harness
+├── assets/
+│   ├── llm_client.py                   # multi-provider LLM factory
+│   ├── telegram_adapter.py             # 強化 TG adapter
+│   ├── agent_template.py
+│   ├── tools_template.py
 │   ├── permissions.json.example
-│   ├── .env.example
-│   └── requirements.txt
+│   ├── .env.example                    # 5 個 provider key + TG + Tavily 欄位
+│   ├── requirements.txt
+│   └── sandbox/
+│       ├── setup_sandbox.bat           # Windows 入口
+│       ├── setup.sh                    # WSL 安裝(裝 Docker Engine,不用 Docker Desktop)
+│       └── Dockerfile                  # 通用最小 Python 容器
 └── evals/
-    └── evals.json           # benchmark 用的 3 個測試 case
+    └── evals.json                      # smoke test:新工具 merge 前必跑
 ```
 
 ## 設計哲學
 
-- **以現有專案為起點** — 階段 1–2 包裝你現有的 code,不重寫。
-- **權限是明確的,不假設** — Skill 內建資料夾 ACL(read/write/delete),沒設好之前不准開 shell。
-- **Tool 把錯誤包成 dict**(`{"error": "..."}`)而非拋例外 — 這樣 orchestrator loop 不會因為一個 tool 失敗就死掉。
-- **輸出檔自動送達** — Tool 產生檔案的時候 return 的 dict 含 `output_file` / `saved_path` / `path` 等 key,Telegram adapter 會掃這些 key 把檔案當 document/photo 傳回 chat。
-- **自我進化是漸進的** — 新 tool 草稿先放 `agent/tools_proposed/`,user 在 Telegram 按下「同意」按鈕才正式合併到 `tools/`。
+- **以現有專案為起點** — 階段 1-2 包裝你現有的 code、不重寫
+- **TG 是唯一前端** — 沒 REPL / 沒桌面 chat、所有 UX 投資集中在 TG adapter
+- **權限永遠 explicit** — 資料夾 ACL、shell access、self-modify 都是 opt-in、預設都不開
+- **Tool 把錯誤包成 dict**(`{"error": "..."}`)而非拋例外 — orchestrator loop 不會因為一個 tool 失敗就死掉
+- **輸出檔自動送達** — Tool 產生檔案的時候 return 的 dict 含 `output_file` / `saved_path` / `path` 等 key,Telegram adapter 自動掃並當 document/photo 傳回 chat
+- **自我進化是漸進的** — 新 tool 草稿先放 `agent/tools_proposed/`,evals 跑過 + 使用者在 TG 按下「同意」按鈕才正式合併到 `tools/`
 
 ## 貢獻
 
 歡迎 PR,特別需要:
 - 非 Python stack 的 reference(Node.js / Go / Rust)
-- 其他 LLM provider 的 asset 範本(OpenAI / Mistral / 本地 Ollama)
-- 更多 eval 測試 case(目前 3 個只涵蓋常見 pattern)
+- 更多 LLM provider 的 client class(Cohere / DeepSeek 等)
+- 更多 eval 測試 case
 
 ## 授權
 
 MIT — 看 [LICENSE](LICENSE)
-
-## 製作工具
-
-- [Claude Code](https://claude.com/claude-code) skill-creator
-- [Anthropic Claude Opus 4.7 (1M context)](https://www.anthropic.com)

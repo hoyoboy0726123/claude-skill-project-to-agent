@@ -48,13 +48,39 @@ Three things matter most for the description:
 2. **Mention return shape** ("Returns dict with keys: customer_id, total, status")
 3. **Mention preconditions** if any ("Requires database connection — call set_db_path first")
 
+## ⛔ Hard rule: every tool function MUST accept `**kwargs`
+
+**Pitfall**: 後期 phases(11 web_search rate-limit / 14 memory user isolation / future tracing)會想從 framework 傳「隱性 context」(`_user_id` / `_chat_id` / `_request_id`)給工具。如果 Phase 2 wrap 的工具 signature 沒接 `**kwargs`,日後一加 inject、**所有工具集體 TypeError 崩**。
+
+實戰回報過真實案例:加 per-user memory 後 24 個既有工具全炸,被迫一個一個改加 `**kwargs`。
+
+**規範**:Phase 2 開始,每個 tool function 一律寫成:
+
+```python
+def my_tool(arg1: str, arg2: int = 0, **kwargs) -> dict:
+    """Tool docstring. **kwargs is intentional — see Phase 2 §kwargs-rule."""
+    # ignore kwargs; framework injects per-user / per-chat context here
+    ...
+    return {"result": ...}
+```
+
+**為什麼這條優於 ContextVar 方案**:
+- `ContextVar`(phase14 推薦)是「正解、無侵入」 — Phase 14 啟用後沒問題
+- 但**早期 phase 2-13 還沒 Phase 14、用戶若手動 inject 也不會炸**
+- `**kwargs` 是**雙保險** — 即使有人偏離 ContextVar 用 inject、tool 不死
+
+> 📌 **與 phase14 ContextVar 的關係**:兩者並存、不衝突。ContextVar 是首選機制;`**kwargs` 是 tool signature 的安全網,確保任何 framework 改動都不會炸 tool。
+
 ## Wrapping pattern
 
 For each chosen function, write a wrapper in `agent/tools.py`:
 
 ```python
-def _read_orders(date: str, status: str = "pending") -> dict:
-    """Wrapper for project.orders.fetch_orders that returns a dict the LLM can read."""
+def _read_orders(date: str, status: str = "pending", **kwargs) -> dict:
+    """Wrapper for project.orders.fetch_orders that returns a dict the LLM can read.
+
+    **kwargs absorbs any framework-injected context (e.g. _user_id, _chat_id).
+    """
     rows = fetch_orders(date_filter=date, status=status)
     return {
         "count": len(rows),

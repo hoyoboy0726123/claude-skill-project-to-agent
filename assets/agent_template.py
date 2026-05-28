@@ -46,11 +46,20 @@ class Tool:
 
     def run(self, args: dict) -> Any:
         try:
-            return self.func(**(args or {}))
+            raw = self.func(**(args or {}))
         except TypeError as e:
             return {"error": f"bad args: {e}"}
         except Exception as e:
-            return {"error": str(e)}
+            import traceback
+            traceback.print_exc()  # host stderr — Phase 4 logging rule
+            return {"error": str(e), "type": type(e).__name__}
+
+        # Defense 4 (Phase 12): SDK requires dict — auto-wrap to be safe.
+        if isinstance(raw, dict):
+            return raw
+        if raw is None:
+            return {"ok": True}
+        return {"result": raw}
 
 
 class ToolRegistry:
