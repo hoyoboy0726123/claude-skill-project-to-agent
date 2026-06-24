@@ -62,7 +62,11 @@ st.markdown(
 # ─── Singletons ──────────────────────────────────────────────
 @st.cache_resource
 def get_store() -> ChatStore:
-    return ChatStore()
+    # Per-project DB so conversations don't leak across projects.
+    # Was a global ~/.cache/agent-web/chats.db shared by EVERY project, so a
+    # brand-new project's web console opened showing another project's old
+    # chats. Scope it to this project's own folder instead.
+    return ChatStore(PROJECT_ROOT / ".agent" / "chats.db")
 
 
 _PROGRESS_ZH = {
